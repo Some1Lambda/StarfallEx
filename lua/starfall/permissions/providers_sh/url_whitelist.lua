@@ -21,6 +21,9 @@ local function checkWhitelist(instance, url, key)
 	return urlrestrictor:check(site), "This url is not whitelisted. See data/"..whitelist_file.." for valid sites."
 end
 
+local registerprivilege = SF.Permissions.registerPrivilege
+local checkpermission = SF.Permissions.check
+
 local P = {}
 P.id = "urlwhitelist"
 P.name = "URL Whitelist"
@@ -40,6 +43,22 @@ if CLIENT then
 end
 
 SF.Permissions.registerProvider(P)
+
+if CLIENT and istable(CFCHTTP) then
+	local P = {}
+	P.id = "cfcwhitelist"
+	P.name = "CFC Whitelist"
+	P.settingsoptions = { "Enabled", "Bypass" }
+	P.defaultsetting = 1
+	P.overridable = true
+	P.checks = {
+		"block",
+		"allow",
+	}
+
+	SF.Permissions.registerProvider(P)
+	registerprivilege("http.cfc_whitelist","HTTP CFC whitelist","Allows the user to bypass the HTTP CFC Whitelist",{ cfcwhitelist = { default = 1 } })
+end
 
 
 local function whitelistNotifyError(filename, err)
