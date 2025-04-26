@@ -16,6 +16,7 @@ SF.RegisterLibrary("http")
 
 return function(instance)
 local checkpermission = instance.player ~= SF.Superuser and SF.Permissions.check or function() end
+local hasaccess = instance.player ~= SF.Superuser and SF.Permissions.hasAccess or function() end
 
 local http_library = instance.Libraries.http
 
@@ -47,6 +48,68 @@ function http_library.getMaximumRequests()
 	return requests.max
 end
 
+local _http = {}
+	if CFCHTTP then
+	function _http.Fetch( url, onsuccess, onfailure, header )
+
+		local request = {
+			url			= url,
+			method		= "get",
+			headers		= header or {},
+
+			success = function( code, body, headers )
+
+				if ( !onsuccess ) then return end
+
+				onsuccess( body, body:len(), headers, code )
+
+			end,
+
+			failed = function( err )
+
+				if ( !onfailure ) then return end
+
+				onfailure( err )
+
+			end
+		}
+
+		local success = _G._HTTP( request )
+		if ( !success && onfailure ) then onfailure( "HTTP failed" ) end
+
+	end
+
+	function _http.Post( url, params, onsuccess, onfailure, header )
+
+		local request = {
+			url			= url,
+			method		= "post",
+			parameters	= params,
+			headers		= header or {},
+
+			success = function( code, body, headers )
+
+				if ( !onsuccess ) then return end
+
+				onsuccess( body, body:len(), headers, code )
+
+			end,
+
+			failed = function( err )
+
+				if ( !onfailure ) then return end
+
+				onfailure( err )
+
+			end
+		}
+
+		local success = _G._HTTP( request )
+		if ( !success && onfailure ) then onfailure( "HTTP failed" ) end
+
+	end
+end
+
 --- Runs a new http GET request
 -- @param string url Http target url
 -- @param function callbackSuccess The function to be called on request success, taking the arguments body (string), length (number), headers (table) and code (number)
@@ -69,7 +132,15 @@ function http_library.get(url, callbackSuccess, callbackFail, headers)
 
 	requests:use(instance.player, 1)
 
-	if CLIENT then SF.HTTPNotify(instance.player, url) end
+	if CLIENT then
+		SF.HTTPNotify(instance.player, url)
+
+		local cfc_bypass = hasaccess(instance,nil,"http.cfc_whitelist")
+		if cfc_bypass then
+			_http.Fetch(url, runCallback(callbackSuccess), runCallback(callbackFail), headers)
+			return
+		end
+	end
 	http.Fetch(url, runCallback(callbackSuccess), runCallback(callbackFail), headers)
 end
 

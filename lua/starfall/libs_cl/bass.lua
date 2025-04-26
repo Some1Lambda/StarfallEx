@@ -135,6 +135,7 @@ SF.RegisterType("Bass", true, false)
 
 return function(instance)
 local checkpermission = instance.player ~= SF.Superuser and SF.Permissions.check or function() end
+local hasaccess = instance.player ~= SF.Superuser and SF.Permissions.hasAccess or function() end
 
 local bass_library = instance.Libraries.bass
 local bass_methods, bass_meta, wrap, unwrap = instance.Types.Bass.Methods, instance.Types.Bass, instance.Types.Bass.Wrap, instance.Types.Bass.Unwrap
@@ -226,7 +227,9 @@ function bass_library.loadURL(path, flags, callback)
 
 	if #path > 2000 then SF.Throw("URL is too long!", 2) end
 
-	loadSound(path, flags, callback, sound.PlayURL)
+	local cfc_bypass = hasaccess(instance,nil,"http.cfc_whitelist")
+
+	loadSound(path, flags, callback, cfc_bypass and _sound_PlayURL or sound.PlayURL)
 	SF.HTTPNotify(instance.player, path)
 end
 
