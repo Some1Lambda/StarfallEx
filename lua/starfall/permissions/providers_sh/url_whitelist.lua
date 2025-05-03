@@ -47,7 +47,7 @@ SF.Permissions.registerProvider(P)
 if CLIENT and istable(CFCHTTP) then
 	local P = {}
 	P.id = "cfcwhitelist"
-	P.name = "CFC Whitelist"
+	P.name = "CFC HTTP Whitelist SF"
 	P.settingsoptions = { "Enabled", "Bypass" }
 	P.defaultsetting = 1
 	P.overridable = true
@@ -57,7 +57,7 @@ if CLIENT and istable(CFCHTTP) then
 	}
 
 	SF.Permissions.registerProvider(P)
-	registerprivilege("http.cfc_whitelist","HTTP CFC whitelist","Allows the user to bypass the HTTP CFC Whitelist",{ cfcwhitelist = { default = 1 } })
+	registerprivilege("http.cfc_whitelist","CFC HTTP whitelist","Allows the user to bypass the CFC HTTP Whitelist",{ cfcwhitelist = { default = 1 } })
 end
 
 
