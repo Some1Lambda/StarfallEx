@@ -142,8 +142,8 @@ function SF.EntityTable(key, destructor, dontwait)
 			if e ~= SF.Superuser then
 				local function ondestroy()
 					if t[e] then
-						if destructor then destructor(e, v) end
 						t[e] = nil
+						if destructor then destructor(e, v) end
 					end
 				end
 				if SERVER or dontwait then
@@ -192,9 +192,10 @@ setmetatable(SF.StructWrapper, SF.StructWrapper)
 SF.BurstObject = {
 	__index = {
 		calc = function(self, obj)
-			local ret = math.min(obj.val + (CurTime() - obj.lasttick) * self.rate, self.max)
+			local new = math.min(obj.val + (CurTime() - obj.lasttick) * self.rate, self.max)
+			obj.val = new
 			obj.lasttick = CurTime()
-			return ret
+			return new
 		end,
 		use = function(self, ply, amount)
 			local obj = self:get(ply)
@@ -206,8 +207,7 @@ SF.BurstObject = {
 		end,
 		check = function(self, ply)
 			local obj = self:get(ply)
-			obj.val = self:calc(obj)
-			return obj.val
+			return self:calc(obj)
 		end,
 		get = function(self, ply)
 			if ply~=SF.Superuser and not Ent_IsValid(ply) then SF.Throw("Invalid starfall user", 4) end
@@ -436,15 +436,31 @@ SF.StringRestrictor = {
 			return self.default
 		end,
 		addWhitelistEntry = function(self, value)
-			table.insert(self.whitelist, value)
+			if not self.whitelistSet[value] then
+				self.whitelistSet[value] = true
+				table.insert(self.whitelist, value)
+			end
+			if self.blacklistSet[value] then
+				self.blacklistSet[value] = nil
+				table.RemoveByValue(self.blacklist, value)
+			end
 		end,
 		addBlacklistEntry = function(self, value)
-			table.insert(self.blacklist, value)
+			if not self.blacklistSet[value] then
+				table.insert(self.blacklist, value)
+				self.blacklistSet[value] = true
+			end
+			if self.whitelistSet[value] then
+				self.whitelistSet[value] = nil
+				table.RemoveByValue(self.whitelist, value)
+			end
 		end
 	},
 	__call = function(p, allowbydefault)
 		local t = {
+			whitelistSet = {},
 			whitelist = {}, -- patterns
+			blacklistSet = {},
 			blacklist = {}, -- patterns
 			default = allowbydefault or false,
 		}
@@ -1018,6 +1034,11 @@ SF.Errormeta = {
 	__metatable = "SFError"
 }
 
+SF.AutoGrowingTable = {
+    __index = function(t,k) local r=SF.AutoGrowingTable() t[k]=r return r end,
+    __call = function(t) return setmetatable({}, SF.AutoGrowingTable) end
+}
+setmetatable(SF.AutoGrowingTable, SF.AutoGrowingTable)
 
 --- Builds an error type to that contains line numbers, file name, and traceback
 function SF.MakeError(msg, level, uncatchable, prependinfo, userdata)
@@ -1331,6 +1352,7 @@ end
 
 --- Compile String but fix a compile error.
 function SF.CompileString(script, identifier, handle_error)
+	if not string.match(script, "%S") then return function() end end
 	if string.match(script, "%f[%w_]repeat%f[^%w_].*%f[%w_]continue%f[^%w_].*%f[%w_]until%f[^%w_]") then
 		return "Using 'continue' in a repeat-until loop has been banned due to a glua bug."
 	end
@@ -1894,6 +1916,21 @@ function SF.clampPos(pos)
 	return pos
 end
 
+function SF.CheckVector(v)
+	if v[1]<-1e12 or v[1]>1e12 or v[1]~=v[1] or
+	   v[2]<-1e12 or v[2]>1e12 or v[2]~=v[2] or
+	   v[3]<-1e12 or v[3]>1e12 or v[3]~=v[3] then
+
+		SF.Throw("Input vector too large or NAN", 3)
+	end
+end
+
+function SF.CheckNumber(n)
+	if n<-1e12 or n>1e12 or n~=n then
+		SF.Throw("Input number too large or NAN", 3)
+	end
+end
+
 local dumbtrace = {
 	FractionLeftSolid = 0,
 	HitNonWorld       = true,
@@ -1916,11 +1953,18 @@ function SF.dumbTrace(entity, pos)
 	return dumbtrace
 end
 
-function SF.IsHUDActive(ent, ply)
-	local tbl = Ent_GetTable(ent) if tbl==nil then return end
-	tbl = tbl.ActiveHuds if tbl==nil then return end
-	return tbl[SERVER and (ply or error("Missing player arg")) or LocalPlayer()]
+SF.IsHUDActive = SERVER and function(ent, ply)
+	if ply==nil then error("Missing player arg") end
+	local tbl = Ent_GetTable(ent) if tbl==nil then return false end
+	tbl = tbl.ActiveHuds if tbl==nil then return false end
+	return tbl[ply] == true
 end
+or function(ent)
+	local tbl = Ent_GetTable(ent) if tbl==nil then return false end
+	tbl = tbl.ActiveHuds if tbl==nil then return false end
+	return tbl[LocalPlayer()] == true
+end
+
 
 local soundsMap = {
 	["DRIP1"] = 0, [0] = "ambient/water/drip1.wav",
@@ -2461,6 +2505,41 @@ do
 				net.Broadcast()
 			end
 		end)
+
+		-- For development. Generates the ENT locals used by the library
+		if game.SinglePlayer() then
+			concommand.Add("sf_printlibrarylocals", function(ply, com, arg)
+				if not arg[1] then print("Expected library path argument in 'starfall'") return end
+				local lib = file.Read("starfall/"..arg[1], "LUA")
+				if not lib then print("File not found: ".."\"starfall/"..arg[1].."\"") return end
+				local metas = {"Ent_","Ply_","Wep_","Veh_","Npc_","Phys_"}
+				local badfuncs = {"IsPlayer","IsWeapon","IsVehicle","IsNPC"}
+				for _, meta in ipairs(metas) do
+					local found = {}
+					for f in string.gmatch(lib, meta.."([%w_]+)%s*%b()") do
+						found[f] = true
+					end
+					if table.IsEmpty(found) then continue end
+
+					for _, v in ipairs(badfuncs) do
+						if found[v] then
+							print(meta..v.." needs to be handled differently")
+							found[v] = nil
+						end
+					end
+
+					local list = table.GetKeys(found)
+					table.sort(list)
+					local metatbl = string.upper(meta).."META"
+					local a, b = {}, {}
+					for i, method in ipairs(list) do
+						a[i] = meta..method
+						b[i] = metatbl.."."..method
+					end
+					print("local " .. table.concat(a, ",") .. " = " .. table.concat(b, ","))
+				end
+			end)
+		end
 
 	else
 		net.Receive("sf_receivelibrary", function(len)
