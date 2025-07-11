@@ -18,14 +18,15 @@ local Vec_Unpack = VEC_META.Unpack
 local Ent_GetTable = ENT_META.GetTable
 
 registerprivilege("render.screen", "Render Screen", "Allows the user to render to a starfall screen", { client = {} })
-registerprivilege("render.hud", "Render Hud", "Allows the user to render to your hud", { client = {} })
 registerprivilege("render.offscreen", "Render Screen", "Allows the user to render without a screen", { client = {} })
 registerprivilege("render.renderView", "Render View", "Allows the user to render the world again with custom perspective", { client = {} })
 registerprivilege("render.renderscene", "Render Scene", "Allows the user to render a world again without a screen with custom perspective", { client = {} })
 registerprivilege("render.effects", "Render Effects", "Allows the user to render special effects such as screen blur, color modification, and bloom", { client = {} })
-registerprivilege("render.calcview", "Render CalcView", "Allows the use of the CalcView hook", { client = {} })
 registerprivilege("render.captureImage", "Render Capture Image", "Allows capturing a rendertarget into an image format", { client = { default = 1 } })
 registerprivilege("render.fog", "Render Fog", "Allows the user to control fog", { client = {} })
+registerprivilege("render.hud", "Render Hud", "Allows the user to render to your hud", { client = { default = 5 } })
+registerprivilege("render.calcview", "Render CalcView", "Allows the use of the CalcView hook", { client = { default = 5 } })
+registerprivilege("render.screenshake", "Render Screen Shake", "Allows screen shaking", { client = { default = 5 } })
 
 local cv_max_fonts = CreateConVar("sf_render_maxfonts", "30", { FCVAR_ARCHIVE })
 local cv_max_maxrenderviewsperframe = CreateConVar("sf_render_maxrenderviewsperframe", "2", { FCVAR_ARCHIVE })
@@ -149,10 +150,9 @@ local rt_bank = SF.ResourceHandler("render_rendertargets", "Render targets", "20
 		return GetRenderTarget("Starfall_CustomRT_" .. i, 1024, 1024)
 	end,
 	function(_, Rt)
-		local oldRt = render.GetRenderTarget()
-		render.SetRenderTarget( Rt )
+		render.PushRenderTarget(Rt)
 		render.Clear(0, 0, 0, 255, true)
-		render.SetRenderTarget( oldRt )
+		render.PopRenderTarget()
 	end
 )
 
@@ -186,11 +186,11 @@ local function cleanupRenderAllowTrueReturn(instance, args)
 end
 
 local function canRenderHud(instance)
-	return SF.IsHUDActive(instance.entity) and (haspermission(instance, nil, "render.hud") or instance.player == SF.Superuser)
+	return haspermission(instance, nil, "render.hud") or instance.player == SF.Superuser
 end
 
 local function hudPrepareSafeArgs(instance, ...)
-	if SF.IsHUDActive(instance.entity) and (haspermission(instance, nil, "render.hud") or instance.player == SF.Superuser) then
+	if canRenderHud(instance) then
 		instance:prepareRender()
 		return true, {...}
 	end
@@ -396,7 +396,7 @@ SF.hookAdd("PostDrawSkyBox", nil, hudPrepareSafeArgs, cleanupRender)
 -- @param number zfar Current far plane of the camera
 -- @return table Table containing information for the camera. {origin=camera origin, angles=camera angles, fov=camera fov, znear=znear, zfar=zfar, drawviewer=drawviewer, ortho=ortho table}
 SF.hookAdd("CalcView", nil, function(instance, ply, pos, ang, fov, znear, zfar)
-	return SF.IsHUDActive(instance.entity) and (haspermission(instance, nil, "render.calcview") or instance.player == SF.Superuser),
+	return haspermission(instance, nil, "render.calcview") or instance.player == SF.Superuser,
 		{instance.Types.Vector.Wrap(pos), instance.Types.Angle.Wrap(ang), fov, znear, zfar}
 end, function(instance, tbl)
 	local t = tbl[2]
@@ -890,6 +890,14 @@ function render_library.setColor(clr)
 	render_library.setRGBA(clr[1], clr[2], clr[3], clr[4])
 end
 
+--- Gets the current draw color set with render.setColor().
+-- @return Color The current draw color
+function render_library.getColor()
+	if not renderdata.isRendering then SF.Throw("Not in rendering hook.", 2) end 
+	local drawClr = surface.GetDrawColor()
+	return setmetatable({drawClr.r, drawClr.g, drawClr.b, drawClr.a}, col_meta)
+end
+
 --- Gets the draw color modulation.
 -- @return number Red channel
 -- @return number Green channel
@@ -986,8 +994,8 @@ local render_SetMaterial = render.SetMaterial
 local render_SetColorMaterial = render.SetColorMaterial
 local draw_NoTexture = draw.NoTexture
 
---- Sets the current render material
--- @param Material mat The material object
+--- Sets or resets the current render material
+-- @param Material? mat The material object to use, or nil to reset
 function render_library.setMaterial(mat)
 	if not renderdata.isRendering then SF.Throw("Not in rendering hook.", 2) end
 	if mat then
@@ -1188,6 +1196,12 @@ function render_library.destroyRenderTarget(name)
 	end
 end
 
+--- Determines if currently rendering to a render-target
+-- @return boolean true when a render target is active (e.g., via render.selectRenderTarget); otherwise, false when rendering directly to the screen or the default backbuffer
+function render_library.isInRenderTarget()
+	return renderdata.usingRT
+end
+
 --- Selects the render target to draw on.
 -- Nil for the visible RT.
 -- @param string? name Name of the render target to use
@@ -1307,29 +1321,31 @@ function render_library.setCullMode(mode)
 end
 
 --- Clears the active render target
--- @param Color? clr Color type to clear with
--- @param boolean? depth Boolean if should clear depth. Default false
-function render_library.clear(clr, depth)
+-- @param Color? clr Color type to clear with. Default opaque black
+-- @param boolean? clearDepth Boolean if should clear depth. Default false
+-- @param boolean? clearStencil Boolean if should clear stencil. Default false
+function render_library.clear(clr, clearDepth, clearStencil)
 	if not renderdata.isRendering then SF.Throw("Not in a rendering hook.", 2) end
 	if renderdata.usingRT then
 		if clr == nil then
-			render.Clear(0, 0, 0, 255, depth)
+			render.Clear(0, 0, 0, 255, clearDepth, clearStencil)
 		else
-			render.Clear(clr.r, clr.g, clr.b, clr.a, depth)
+			render.Clear(clr.r, clr.g, clr.b, clr.a, clearDepth, clearStencil)
 		end
 	end
 end
 
 --- Clears the active render target
--- @return number The red channel value.
--- @return number The green channel value.
--- @return number The blue channel value.
--- @return number The alpha channel value.
--- @param boolean? depth Boolean if should clear depth. Default false
-function render_library.clearRGBA(r, g, b, a, depth)
+-- @param number r The red channel value.
+-- @param number g The green channel value.
+-- @param number b The blue channel value.
+-- @param number a The alpha channel value.
+-- @param boolean? clearDepth Boolean if should clear depth. Default false
+-- @param boolean? clearStencil Boolean if should clear stencil. Default false
+function render_library.clearRGBA(r, g, b, a, clearDepth, clearStencil)
 	if not renderdata.isRendering then SF.Throw("Not in a rendering hook.", 2) end
 	if renderdata.usingRT then
-		render.Clear(r, g, b, a, depth)
+		render.Clear(r, g, b, a, clearDepth, clearStencil)
 	end
 end
 
@@ -1760,7 +1776,7 @@ end
 -- @param boolean? additive If true, adds brightness to pixels behind it rather than drawing over them. Default false
 -- @param boolean? shadow Enable drop shadow? Default false
 -- @param boolean? outline Enable outline? Default false
--- @param boolean? blursize The size of the blur Default 0
+-- @param number? blursize The size of the blur Default 0
 -- @param boolean? extended Allows the font to display glyphs outside of Latin-1 range. Unicode code points above 0xFFFF are not supported. Required to use FontAwesome
 -- @param number? scanlines Scanline interval. Must be greater than 1 to work. Shares uniqueness with blursize so you cannot create more than one scanline type of font with the same blursize. Default 0
 -- @return string The font name that can be used with the rest of the font functions.
@@ -1867,7 +1883,7 @@ end
 -- @param number x X coordinate
 -- @param number y Y coordinate
 -- @param string text Text to draw
--- @param number alignment Horizontal text alignment. Default TEXT_ALIGN.LEFT
+-- @param number? alignment Horizontal text alignment. Default TEXT_ALIGN.LEFT
 function render_library.drawText(x, y, text, alignment)
 	if not renderdata.isRendering then SF.Throw("Not in rendering hook.", 2) end
 
@@ -1961,11 +1977,11 @@ function render_library.enableDepth(enable)
 	render.OverrideDepthEnable(enable, enable)
 end
 
---- Enables blend mode control. Read OpenGL or DirectX docs for more info
+--- Enables or disables blend mode control. Read OpenGL or DirectX docs for more info
 -- @param boolean on Whether to control the blend mode of upcoming rendering
--- @param number srcBlend http://wiki.facepunch.com/gmod/Enums/BLEND
--- @param number destBlend
--- @param number blendFunc http://wiki.facepunch.com/gmod/Enums/BLENDFUNC
+-- @param number? srcBlend http://wiki.facepunch.com/gmod/Enums/BLEND
+-- @param number? destBlend
+-- @param number? blendFunc http://wiki.facepunch.com/gmod/Enums/BLENDFUNC
 -- @param number? srcBlendAlpha http://wiki.facepunch.com/gmod/Enums/BLEND
 -- @param number? destBlendAlpha
 -- @param number? blendFuncAlpha http://wiki.facepunch.com/gmod/Enums/BLENDFUNC
@@ -2231,8 +2247,8 @@ end
 --- Gets a 2D cursor position where ply is aiming at the current rendered screen or nil if they aren't aiming at it.
 -- @param Player? ply player to get cursor position from. Default player()
 -- @param Entity? screen An explicit screen to get the cursor pos of (default: The current rendering screen using 'render' hook)
--- @return number X position
--- @return number Y position
+-- @return number? X position or nil if the player is not aiming at the screen
+-- @return number? Y position or nil if the player is not aiming at the screen
 function render_library.cursorPos(ply, screen)
 	if ply~=nil then
 		ply = getent(ply)
@@ -2386,7 +2402,7 @@ function render_library.traceSurfaceColor(startpos, endpos)
 end
 
 --- Checks if the client is connected to a HUD component that's linked to this chip
--- @return boolean True if a HUD component is connected and active, nil otherwise
+-- @return boolean If a HUD component is connected and active
 function render_library.isHUDActive()
 	return SF.IsHUDActive(instance.entity)
 end
@@ -2726,7 +2742,7 @@ local vector_zero = Vector(0, 0, 0)
 -- @param number frequency The frequency of the effect in hertz
 -- @param number duration The duration of the effect in seconds, max 10.
 function render_library.screenShake(amplitude, frequency, duration)
-	if not SF.IsHUDActive(instance.entity) then SF.Throw("Player isn't connected to HUD!", 2) end
+	checkpermission(instance, nil, "render.screenshake")
 	util.ScreenShake(vector_zero, amplitude, frequency, clamp(duration, 0, 10), 0)
 end
 

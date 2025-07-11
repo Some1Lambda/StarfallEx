@@ -228,6 +228,11 @@ builtins_library.CLIENT = CLIENT
 -- @class field
 builtins_library.SERVER = SERVER
 
+--- Constant that denotes wether the code is executed on the owner's client
+-- @name builtins_library.OWNER
+-- @class field
+builtins_library.OWNER = CLIENT and instance.player == LocalPlayer()
+
 --- Returns if this is the first time this hook was predicted.
 -- @name builtins_library.isFirstTimePredicted
 -- @class function
@@ -398,7 +403,7 @@ os_library.clock = os.clock
 --- Returns the date/time as a formatted string or in a table.
 -- See https://wiki.facepunch.com/gmod/Structures/DateData for the table structure
 -- @class function
--- @param string format The format string. If starts with an '!', it will use UTC timezone rather than the local timezone
+-- @param string? format The format string. If starts with an '!', it will use UTC timezone rather than the local timezone
 -- @param number? time Time to use for the format. Default os.time()
 -- @return string|table If format is equal to '*t' or '!*t' then it will return a table with DateData structure, otherwise a string
 os_library.date = function(format, time)
@@ -421,6 +426,21 @@ os_library.difftime = os.difftime
 -- @param table? dateData Optional table to generate the time from. This table's data is interpreted as being in the local timezone
 -- @return number Seconds passed since Unix epoch
 os_library.time = os.time
+
+--- Returns true if the operating system Windows is running gmod
+-- @class function
+-- @return boolean If the os is Windows
+os_library.isWindows = system.IsWindows
+
+--- Returns true if the operating system Linux is running gmod
+-- @class function
+-- @return boolean If the os is Linux
+os_library.isLinux = system.IsLinux
+
+--- Returns true if the operating system OSX is running gmod
+-- @class function
+-- @return boolean If the os is OSX
+os_library.isOSX = system.IsOSX
 
 
 -- ------------------------- Functions ------------------------- --
@@ -578,6 +598,21 @@ if SERVER then
 		printTableX(tbl, 0, { [tbl] = true })
 	end
 
+	--- Checks how much of the serverside print burst limit is remaining
+	--- The cost of each print is roughly equivalent to totalStringLength + 6*numColors + 2*numStrings
+	-- @server
+	-- @return number Size of the remaining print burst in bytes
+	function builtins_library.printSizeLeft()
+		return printBurst:check(instance.player)
+	end
+
+	--- Returns the refill rate of the serverside print burst limit
+	-- @server
+	-- @return number Number of bytes per second the print burst limit refills
+	function builtins_library.printRate()
+		return printBurst.rate
+	end
+
 	--- Execute a console command
 	-- @shared
 	-- @param string cmd Command to execute
@@ -587,6 +622,21 @@ if SERVER then
 		checkpermission(instance, nil, "console.command")
 		concmdBurst:use(instance.player, #cmd)
 		instance.player:ConCommand(cmd)
+	end
+
+	--- Checks how many concmds are remaining in the serverside burst limit
+	-- @server
+	-- @return number Number of concmds able to be ran serverside
+	function builtins_library.concmdLeft()
+		if not haspermission(instance,  nil, "console.command") then return 0 end
+		return concmdBurst:check(instance.player)
+	end
+
+	--- Returns how many concmds per second the user can run serverside
+	-- @server
+	-- @return number Number of concmds per second the user can run serverside
+	function builtins_library.concmdRate()
+		return concmdBurst.rate
 	end
 
 	--- Sets the chip's userdata that the duplicator tool saves. max 1MiB; can be changed with convar sf_userdata_max
@@ -753,26 +803,28 @@ end
 --- Sets the chip to allow other chips to view its sources
 -- @param boolean enable If true, allow sharing scripts
 function builtins_library.shareScripts(enable)
-	instance.shareScripts = (enable == true) or nil
+	checkluatype(enable, TYPE_BOOL)
+	instance.shareScripts = enable
 end
 
 --- Runs an included script and caches the result.
 -- The path must be an actual path, including the file extension and using slashes for directory separators instead of periods.
 -- @param string path The file path to include. Make sure to --@include it
+-- @param ... args Optional arguments to provide to the script (access them using vararg ...)
 -- @return any Return value of the script
-function builtins_library.require(path)
+function builtins_library.require(path, ...)
 	checkluatype(path, TYPE_STRING)
 
 	local curdir = SF.GetExecutingPath() or ""
 	path = instance.ppdata:ResolvePath(path, curdir) or path
 
-	return instance:require(path)
+	return instance:require(path, ...)
 end
 
 --- Runs all included scripts in a directory and caches the results.
 -- The path must be an actual path, including the file extension and using slashes for directory separators instead of periods.
 -- @param string path The directory to include. Make sure to --@includedir it
--- @param table loadpriority Table of files that should be loaded before any others in the directory
+-- @param table? loadpriority Table of files that should be loaded before any others in the directory
 -- @return table Table of return values of the scripts
 function builtins_library.requiredir(path, loadpriority)
 	checkluatype(path, TYPE_STRING)
@@ -814,14 +866,15 @@ end
 --- Runs an included script, but does not cache the result.
 -- Pretty much like standard Lua dofile()
 -- @param string path The file path to include. Make sure to --@include it
+-- @param ... args Optional arguments to provide to the script (access them using vararg ...)
 -- @return ... Return value(s) of the script
-function builtins_library.dofile(path)
+function builtins_library.dofile(path, ...)
 	checkluatype(path, TYPE_STRING)
 
 	local curdir = SF.GetExecutingPath() or ""
 	path = instance.ppdata:ResolvePath(path, curdir) or path
 
-	return (instance.scripts[path] or SF.Throw("Can't find file '" .. path .. "' (did you forget to --@include it?)", 2))()
+	return (instance.scripts[path] or SF.Throw("Can't find file '" .. path .. "' (did you forget to --@include it?)", 2))(...)
 end
 
 --- Runs all included scripts in directory, but does not cache the result.

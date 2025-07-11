@@ -12,6 +12,7 @@ if SERVER then
 	SF.cpuQuota = CreateConVar("sf_timebuffer", 0.005, FCVAR_ARCHIVE, "The max average the CPU time can reach.")
 	SF.cpuBufferN = CreateConVar("sf_timebuffersize", 100, FCVAR_ARCHIVE, "The window width of the CPU time quota moving average.")
 	SF.softLockProtection = CreateConVar("sf_timebuffersoftlock", 1, FCVAR_ARCHIVE, "Consumes more cpu, but protects from freezing the game. Only turn this off if you want to use a profiler on your scripts.")
+	SF.softLockProtectionSuperUser = CreateConVar("sf_timebuffersoftlock_superuser", 0, {FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Determines whether CPU checks should be done for superusers as well?")
 	SF.RamCap = CreateConVar("sf_ram_max", 1500000, FCVAR_ARCHIVE, "If ram exceeds this limit (in kB), starfalls will be terminated")
 	SF.AllowSuperUser = CreateConVar("sf_superuserallowed", 0, {FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Whether the starfall superuser feature is allowed")
 else
@@ -20,6 +21,7 @@ else
 	SF.cpuBufferN = CreateConVar("sf_timebuffersize_cl", 100, FCVAR_ARCHIVE, "The window width of the CPU time quota moving average.")
 	SF.softLockProtection = CreateConVar("sf_timebuffersoftlock_cl", 1, FCVAR_ARCHIVE, "Consumes more cpu, but protects from freezing the game. Only turn this off if you want to use a profiler on your scripts.")
 	SF.softLockProtectionOwner = CreateConVar("sf_timebuffersoftlock_cl_owner", 1, FCVAR_ARCHIVE, "If sf_timebuffersoftlock_cl is 0, this enabled will make it only your own chips will be affected.")
+	SF.softLockProtectionSuperUser = CreateConVar("sf_timebuffersoftlock_superuser", 0, {FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Determines whether CPU checks should be done for superusers as well?")
 	SF.RamCap = CreateConVar("sf_ram_max_cl", 1500000, FCVAR_ARCHIVE, "If ram exceeds this limit (in kB), starfalls will be terminated")
 	SF.AllowSuperUser = CreateConVar("sf_superuserallowed", 0, {FCVAR_ARCHIVE, FCVAR_REPLICATED}, "Whether the starfall superuser feature is allowed")
 	SF.CvarEnabled = CreateConVar( "sf_enabled_cl", "1", { FCVAR_ARCHIVE, FCVAR_USERINFO, FCVAR_DONTRECORD }, "Enable clientside starfall" )
@@ -88,7 +90,7 @@ function SF.Instance.Compile(code, mainfile, player, entity)
 	instance.player = player
 
 	if player == SF.Superuser then
-		instance:setCheckCpu(false)
+		instance:setCheckCpu(SF.softLockProtectionSuperUser:GetBool() and SF.softLockProtection:GetBool())
 	else
 		if SERVER then
 			instance:setCheckCpu(SF.softLockProtection:GetBool())
@@ -318,6 +320,7 @@ function SF.Instance:BuildEnvironment()
 				local valuet = TypeID(value)
 				if not safe_types[keyt] then
 					key = WrapObject(key) or (keyt == TYPE_TABLE and (completed_tables[key] or RecursiveSanitize(key)) or nil)
+					if key==nil then continue end
 				end
 				if not safe_types[valuet] then
 					value = WrapObject(value) or (valuet == TYPE_TABLE and (completed_tables[value] or RecursiveSanitize(value)) or nil)
@@ -339,6 +342,7 @@ function SF.Instance:BuildEnvironment()
 			for key, value in pairs(tbl) do
 				if TypeID(key) == TYPE_TABLE then
 					key = UnwrapObject(key) or completed_tables[key] or RecursiveUnsanitize(key)
+					if key==nil then continue end
 				end
 				if TypeID(value) == TYPE_TABLE then
 					value = UnwrapObject(value) or completed_tables[value] or RecursiveUnsanitize(value)
@@ -636,7 +640,7 @@ function SF.Instance:runFunction(func, ...)
 end
 
 local requireSentinel = {}
-function SF.Instance:require(path)
+function SF.Instance:require(path, ...)
 	local loaded = self.requires
 	if loaded[path] == requireSentinel then
 		SF.Throw("Cyclic require loop detected!", 3)
@@ -645,7 +649,7 @@ function SF.Instance:require(path)
 	else
 		local func = self.scripts[path] or SF.Throw("Can't find file '" .. path .. "' (did you forget to --@include it?)", 3)
 		loaded[path] = requireSentinel
-		local ret = func()
+		local ret = func(...)
 		loaded[path] = ret or true
 		return ret
 	end
