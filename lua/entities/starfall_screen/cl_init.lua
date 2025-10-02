@@ -390,9 +390,9 @@ ENT.Monitor_Offsets = {
 	},
 	["models/props/cs_assault/billboard.mdl"] = {
 		Name	=	"Billboard",
-		RS	=	0.23,
+		RS	=	0.2257,
 		RatioX	=	0.522,
-		offset	=	Vector(2, 0, 0),
+		offset	=	Vector(1, 0, 0),
 		rot	=	Angle(0, 90, -90),
 		x1	=	-110.512,
 		x2	=	110.512,
