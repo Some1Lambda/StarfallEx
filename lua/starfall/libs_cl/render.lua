@@ -186,7 +186,7 @@ local function cleanupRenderAllowTrueReturn(instance, args)
 end
 
 local function canRenderHud(instance)
-	return haspermission(instance, nil, "render.hud") or instance.player == SF.Superuser
+	return instance.player == SF.Superuser or haspermission(instance, nil, "render.hud")
 end
 
 local function hudPrepareSafeArgs(instance, ...)
@@ -202,7 +202,7 @@ end
 -- @class hook
 -- @client
 SF.hookAdd("PreRender", "renderoffscreen", function(instance)
-	if haspermission(instance, nil, "render.offscreen") or instance.player == SF.Superuser then
+	if instance.player == SF.Superuser or haspermission(instance, nil, "render.offscreen") then
 		instance:prepareRenderOffscreen()
 		return true, {}
 	end
@@ -217,7 +217,7 @@ end, cleanupRender)
 -- @param Angle angles View angles
 -- @param number fov View FOV
 SF.hookAdd("RenderScene", "renderscene", function(instance, origin, angles, fov)
-	if haspermission(instance, nil, "render.renderscene") or instance.player == SF.Superuser then
+	if instance.player == SF.Superuser or haspermission(instance, nil, "render.renderscene") then
 		instance:prepareRender()
 		instance.data.render.isScenic = true
 		return true, {instance.Types.Vector.Wrap(origin), instance.Types.Angle.Wrap(angles), fov}
@@ -322,10 +322,25 @@ end, cleanupRender)
 -- @return boolean Return true to prevent the player from drawing
 SF.hookAdd("PrePlayerDraw", "predrawplayer", function(instance, ply, flags)
 	if canRenderHud(instance) then
+		instance:prepareRender()
 		return true, { instance.Types.Player.Wrap(ply), flags }
 	end
 	return false
 end, cleanupRenderAllowTrueReturn)
+
+--- Called after drawing the player. (Only works with HUD) (3D Context)
+-- @name PostDrawPlayer
+-- @class hook
+-- @client
+-- @param Player ply Player that's about to be drawn
+-- @param number flags STUDIO flags for the render operation
+SF.hookAdd("PostPlayerDraw", "postdrawplayer", function(instance, ply, flags)
+	if canRenderHud(instance) then
+		instance:prepareRender()
+		return true, { instance.Types.Player.Wrap(ply), flags }
+	end
+	return false
+end, cleanupRender)
 
 --- Called before drawing the viewmodel rendergroup (3D Context)
 -- @name PreDrawViewModels
@@ -396,7 +411,7 @@ SF.hookAdd("PostDrawSkyBox", nil, hudPrepareSafeArgs, cleanupRender)
 -- @param number zfar Current far plane of the camera
 -- @return table Table containing information for the camera. {origin=camera origin, angles=camera angles, fov=camera fov, znear=znear, zfar=zfar, drawviewer=drawviewer, ortho=ortho table}
 SF.hookAdd("CalcView", nil, function(instance, ply, pos, ang, fov, znear, zfar)
-	return haspermission(instance, nil, "render.calcview") or instance.player == SF.Superuser,
+	return instance.player == SF.Superuser or haspermission(instance, nil, "render.calcview"),
 		{instance.Types.Vector.Wrap(pos), instance.Types.Angle.Wrap(ang), fov, znear, zfar}
 end, function(instance, tbl)
 	local t = tbl[2]
